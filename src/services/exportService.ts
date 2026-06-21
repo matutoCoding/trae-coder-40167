@@ -9,8 +9,19 @@ export function generateExportContent(
   topics: Topic[],
   config: ExportConfig
 ): string {
+  const filteredSpeakerIds = config.selectedSpeakerIds?.length > 0
+    ? config.selectedSpeakerIds
+    : speakers.map(s => s.id);
+  const filteredTopicIds = config.selectedTopicIds?.length > 0
+    ? config.selectedTopicIds
+    : topics.map(t => t.id);
+
+  const filteredSpeakers = speakers.filter(s => filteredSpeakerIds.includes(s.id));
+  const filteredTranscripts = transcripts.filter(t => filteredSpeakerIds.includes(t.speakerId));
+  const filteredTopics = topics.filter(t => filteredTopicIds.includes(t.id));
+
   const getSpeakerName = (speakerId: string): string => {
-    const speaker = speakers.find(s => s.id === speakerId);
+    const speaker = filteredSpeakers.find(s => s.id === speakerId) || speakers.find(s => s.id === speakerId);
     if (!speaker) return '未知发言人';
     if (config.anonymize) {
       const index = speakers.findIndex(s => s.id === speakerId);
@@ -20,18 +31,18 @@ export function generateExportContent(
   };
 
   const getSpeakerInfo = (speakerId: string): string => {
-    const speaker = speakers.find(s => s.id === speakerId);
+    const speaker = filteredSpeakers.find(s => s.id === speakerId) || speakers.find(s => s.id === speakerId);
     if (!speaker || !config.includeSpeakerInfo || config.anonymize) return '';
     const info = [speaker.department, speaker.role].filter(Boolean).join(' / ');
     return info ? ` (${info})` : '';
   };
 
   if (config.format === 'full') {
-    return generateFullTranscript(meeting, speakers, transcripts, config, getSpeakerName, getSpeakerInfo);
+    return generateFullTranscript(meeting, filteredSpeakers, filteredTranscripts, config, getSpeakerName, getSpeakerInfo);
   } else if (config.format === 'decisions') {
-    return generateDecisionsAndActions(meeting, topics, config);
+    return generateDecisionsAndActions(meeting, filteredTopics, config);
   } else {
-    return generateByPerson(meeting, speakers, transcripts, config, getSpeakerName, getSpeakerInfo);
+    return generateByPerson(meeting, filteredSpeakers, filteredTranscripts, config, getSpeakerName, getSpeakerInfo);
   }
 }
 

@@ -19,7 +19,9 @@ import {
   CheckCircle2,
   History,
   Calendar,
-  FileAudio
+  FileAudio,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { ExportFormat, ExportFileType } from '@/types';
 
@@ -252,6 +254,107 @@ export default function ExportPage() {
                   />
                 </div>
               </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold text-gray-900 flex items-center">
+                  <Users className="w-5 h-5 mr-2 text-primary-600" />
+                  选择发言人
+                </h2>
+                <button
+                  onClick={() => {
+                    const allSelected = exportConfig.selectedSpeakerIds.length === speakers.length;
+                    updateExportConfig({
+                      selectedSpeakerIds: allSelected ? [] : speakers.map(s => s.id),
+                    });
+                  }}
+                  className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                >
+                  {exportConfig.selectedSpeakerIds.length === speakers.length ? '取消全选' : '全选'}
+                </button>
+              </div>
+            </CardHeader>
+            <CardBody className="space-y-2 max-h-48 overflow-y-auto">
+              {speakers.map((speaker) => {
+                const checked = exportConfig.selectedSpeakerIds.includes(speaker.id);
+                return (
+                  <div
+                    key={speaker.id}
+                    onClick={() => {
+                      const next = checked
+                        ? exportConfig.selectedSpeakerIds.filter(id => id !== speaker.id)
+                        : [...exportConfig.selectedSpeakerIds, speaker.id];
+                      updateExportConfig({ selectedSpeakerIds: next });
+                    }}
+                    className="flex items-center p-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                  >
+                    {checked ? (
+                      <CheckSquare className="w-4 h-4 text-primary-600 flex-shrink-0" />
+                    ) : (
+                      <Square className="w-4 h-4 text-gray-300 flex-shrink-0" />
+                    )}
+                    <div
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-medium ml-2 flex-shrink-0"
+                      style={{ backgroundColor: speaker.color }}
+                    >
+                      {speaker.name.charAt(0)}
+                    </div>
+                    <span className="ml-2 text-sm text-gray-700 truncate">{speaker.name}</span>
+                  </div>
+                );
+              })}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold text-gray-900 flex items-center">
+                  <FileText className="w-5 h-5 mr-2 text-primary-600" />
+                  选择议题
+                </h2>
+                <button
+                  onClick={() => {
+                    const allSelected = exportConfig.selectedTopicIds.length === topics.length;
+                    updateExportConfig({
+                      selectedTopicIds: allSelected ? [] : topics.map(t => t.id),
+                    });
+                  }}
+                  className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                >
+                  {exportConfig.selectedTopicIds.length === topics.length ? '取消全选' : '全选'}
+                </button>
+              </div>
+            </CardHeader>
+            <CardBody className="space-y-2 max-h-48 overflow-y-auto">
+              {topics.map((topic) => {
+                const checked = exportConfig.selectedTopicIds.includes(topic.id);
+                return (
+                  <div
+                    key={topic.id}
+                    onClick={() => {
+                      const next = checked
+                        ? exportConfig.selectedTopicIds.filter(id => id !== topic.id)
+                        : [...exportConfig.selectedTopicIds, topic.id];
+                      updateExportConfig({ selectedTopicIds: next });
+                    }}
+                    className="flex items-start p-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                  >
+                    {checked ? (
+                      <CheckSquare className="w-4 h-4 text-primary-600 flex-shrink-0 mt-0.5" />
+                    ) : (
+                      <Square className="w-4 h-4 text-gray-300 flex-shrink-0 mt-0.5" />
+                    )}
+                    <div className="ml-2 min-w-0 flex-1">
+                      <div className="text-sm font-medium text-gray-800 truncate">{topic.title}</div>
+                      <div className="text-xs text-gray-400 truncate mt-0.5">{topic.summary}</div>
+                    </div>
+                  </div>
+                );
+              })}
             </CardBody>
           </Card>
 

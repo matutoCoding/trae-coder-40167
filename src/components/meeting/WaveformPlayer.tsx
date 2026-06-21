@@ -28,13 +28,35 @@ export default function WaveformPlayer({
   const [showRateMenu, setShowRateMenu] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
+  const internalTimeRef = useRef<number>(currentTime);
+  const playbackRateRef = useRef<number>(playbackRate);
 
   const playbackRates = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
   useEffect(() => {
+    internalTimeRef.current = currentTime;
+  }, [currentTime]);
+
+  useEffect(() => {
+    playbackRateRef.current = playbackRate;
+  }, [playbackRate]);
+
+  useEffect(() => {
     if (isPlaying) {
       timerRef.current = setInterval(() => {
-        onTimeUpdate(currentTime + playbackRate * 0.5);
+        const nextTime = Math.min(
+          duration,
+          internalTimeRef.current + playbackRateRef.current * 0.5
+        );
+        internalTimeRef.current = nextTime;
+        onTimeUpdate(nextTime);
+        if (nextTime >= duration) {
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+          onPlayPause();
+        }
       }, 500);
     } else {
       if (timerRef.current) {
@@ -48,22 +70,17 @@ export default function WaveformPlayer({
         timerRef.current = null;
       }
     };
-  }, [isPlaying, playbackRate]);
-
-  useEffect(() => {
-    if (isPlaying && currentTime >= duration) {
-      onSeek(0);
-      onPlayPause();
-    }
-  }, [currentTime, duration, isPlaying]);
+  }, [isPlaying, duration, onTimeUpdate, onPlayPause]);
 
   const handleSkipBack = () => {
-    const newTime = Math.max(0, currentTime - 5);
+    const newTime = Math.max(0, internalTimeRef.current - 5);
+    internalTimeRef.current = newTime;
     onSeek(newTime);
   };
 
   const handleSkipForward = () => {
-    const newTime = Math.min(duration, currentTime + 5);
+    const newTime = Math.min(duration, internalTimeRef.current + 5);
+    internalTimeRef.current = newTime;
     onSeek(newTime);
   };
 
@@ -71,8 +88,10 @@ export default function WaveformPlayer({
     if (!progressBarRef.current || duration <= 0) return;
     const rect = progressBarRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const ratio = x / rect.width;
-    onSeek(ratio * duration);
+    const ratio = Math.max(0, Math.min(1, x / rect.width));
+    const newTime = ratio * duration;
+    internalTimeRef.current = newTime;
+    onSeek(newTime);
   };
 
   const progressRatio = duration > 0 ? currentTime / duration : 0;

@@ -3,7 +3,55 @@ import { Speaker, TranscriptSegment, Topic, ActionItem, Meeting, ExportConfig } 
 import { mockMeetings, mockSpeakers, mockTranscripts, mockTopics } from '@/mock/meetingData';
 import { generateId, getSpeakerColor } from '@/utils/format';
 
+const STORAGE_KEY = 'meeting-workbench-data-v1';
+
 const speakerColors = ['#4ecdc4', '#ffd93d', '#6bcb77', '#b19cd9', '#ff8c69', '#74b9ff'];
+
+function loadFromStorage(): {
+  meetings: Meeting[];
+  allSpeakers: Speaker[];
+  allTranscripts: TranscriptSegment[];
+  allTopics: Topic[];
+} | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      Array.isArray(parsed.meetings) &&
+      Array.isArray(parsed.allSpeakers) &&
+      Array.isArray(parsed.allTranscripts) &&
+      Array.isArray(parsed.allTopics) &&
+      parsed.meetings.length > 0
+    ) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveToStorage(state: {
+  meetings: Meeting[];
+  allSpeakers: Speaker[];
+  allTranscripts: TranscriptSegment[];
+  allTopics: Topic[];
+}) {
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        meetings: state.meetings,
+        allSpeakers: state.allSpeakers,
+        allTranscripts: state.allTranscripts,
+        allTopics: state.allTopics,
+      })
+    );
+  } catch {
+    // ignore
+  }
+}
 
 interface MeetingState {
   meetings: Meeting[];
@@ -164,309 +212,346 @@ function buildTopicsFromTranscripts(
   return topics;
 }
 
-export const useMeetingStore = create<MeetingState>((set, get) => ({
-  meetings: mockMeetings,
-  currentMeetingId: null,
-  speakers: [],
-  transcripts: [],
-  topics: [],
-  selectedSegmentId: null,
-  isPlaying: false,
-  currentTime: 0,
-  exportConfig: {
-    format: 'full',
-    fileType: 'txt',
-    includeTimestamp: true,
-    anonymize: false,
-    includeSpeakerInfo: true,
-  },
+export const useMeetingStore = create<MeetingState>((set, get) => {
+  const stored = loadFromStorage();
+  const initialMeetings = stored ? stored.meetings : mockMeetings;
+  const initialAllSpeakers = stored ? stored.allSpeakers : [...mockSpeakers];
+  const initialAllTranscripts = stored ? stored.allTranscripts : [...mockTranscripts];
+  const initialAllTopics = stored ? stored.allTopics : [...mockTopics];
 
-  allSpeakers: [...mockSpeakers],
-  allTranscripts: [...mockTranscripts],
-  allTopics: [...mockTopics],
+  const persist = () => {
+    const s = get();
+    saveToStorage({
+      meetings: s.meetings,
+      allSpeakers: s.allSpeakers,
+      allTranscripts: s.allTranscripts,
+      allTopics: s.allTopics,
+    });
+  };
 
-  setCurrentMeeting: (id: string) => {
-    const state = get();
-    const meeting = state.meetings.find(m => m.id === id);
-    if (!meeting) return;
+  return {
+    meetings: initialMeetings,
+    currentMeetingId: null,
+    speakers: [],
+    transcripts: [],
+    topics: [],
+    selectedSegmentId: null,
+    isPlaying: false,
+    currentTime: 0,
+    exportConfig: {
+      format: 'full',
+      fileType: 'txt',
+      includeTimestamp: true,
+      anonymize: false,
+      includeSpeakerInfo: true,
+      selectedSpeakerIds: [],
+      selectedTopicIds: [],
+    },
 
-    set({
-      currentMeetingId: id,
-      speakers: state.allSpeakers.filter(s => s.meetingId === id),
-      transcripts: state.allTranscripts
+    allSpeakers: initialAllSpeakers,
+    allTranscripts: initialAllTranscripts,
+    allTopics: initialAllTopics,
+
+    setCurrentMeeting: (id: string) => {
+      const state = get();
+      const meeting = state.meetings.find(m => m.id === id);
+      if (!meeting) return;
+
+      const meetingSpeakers = state.allSpeakers.filter(s => s.meetingId === id);
+      const meetingTopics = state.allTopics
         .filter(t => t.meetingId === id)
-        .sort((a, b) => a.order - b.order),
-      topics: state.allTopics
-        .filter(t => t.meetingId === id)
-        .sort((a, b) => a.order - b.order),
-      selectedSegmentId: null,
-      currentTime: 0,
-      isPlaying: false,
-    });
-  },
-
-  updateSpeaker: (id: string, updates: Partial<Speaker>) => {
-    set(state => {
-      const updatedSpeakers = state.speakers.map(s =>
-        s.id === id ? { ...s, ...updates, isVerified: true } : s
-      );
-      const updatedAllSpeakers = state.allSpeakers.map(s =>
-        s.id === id ? { ...s, ...updates, isVerified: true } : s
-      );
-      return { speakers: updatedSpeakers, allSpeakers: updatedAllSpeakers };
-    });
-  },
-
-  updateSegment: (id: string, updates: Partial<TranscriptSegment>) => {
-    set(state => {
-      const updatedTranscripts = state.transcripts.map(t =>
-        t.id === id ? { ...t, ...updates, isEdited: true } : t
-      );
-      const updatedAllTranscripts = state.allTranscripts.map(t =>
-        t.id === id ? { ...t, ...updates, isEdited: true } : t
-      );
-      return { transcripts: updatedTranscripts, allTranscripts: updatedAllTranscripts };
-    });
-    get().regenerateTopics();
-  },
-
-  mergeSegments: (segmentIds: string[]) => {
-    set(state => {
-      const segments = state.transcripts.filter(t => segmentIds.includes(t.id));
-      if (segments.length < 2) return state;
-
-      const sorted = [...segments].sort((a, b) => a.order - b.order);
-      const first = sorted[0];
-      const last = sorted[sorted.length - 1];
-      const mergedText = sorted.map(s => s.text).join('');
-
-      const mergedSegment: TranscriptSegment = {
-        ...first,
-        endTime: last.endTime,
-        text: mergedText,
-        isEdited: true,
-      };
-
-      const updatedTranscripts = [...state.transcripts.filter(t => !segmentIds.includes(t.id)), mergedSegment]
         .sort((a, b) => a.order - b.order);
 
-      const updatedAllTranscripts = state.allTranscripts.map(t => {
-        if (segmentIds.includes(t.id)) return null;
-        return t;
-      }).filter(Boolean).map(t => t as TranscriptSegment);
-      const existingInAll = updatedAllTranscripts.some(t => t.id === mergedSegment.id);
-      if (!existingInAll) {
-        updatedAllTranscripts.push(mergedSegment);
+      set({
+        currentMeetingId: id,
+        speakers: meetingSpeakers,
+        transcripts: state.allTranscripts
+          .filter(t => t.meetingId === id)
+          .sort((a, b) => a.order - b.order),
+        topics: meetingTopics,
+        selectedSegmentId: null,
+        currentTime: 0,
+        isPlaying: false,
+        exportConfig: {
+          ...state.exportConfig,
+          selectedSpeakerIds: meetingSpeakers.map(s => s.id),
+          selectedTopicIds: meetingTopics.map(t => t.id),
+        },
+      });
+    },
+
+    updateSpeaker: (id: string, updates: Partial<Speaker>) => {
+      set(state => {
+        const updatedSpeakers = state.speakers.map(s =>
+          s.id === id ? { ...s, ...updates, isVerified: true } : s
+        );
+        const updatedAllSpeakers = state.allSpeakers.map(s =>
+          s.id === id ? { ...s, ...updates, isVerified: true } : s
+        );
+        return { speakers: updatedSpeakers, allSpeakers: updatedAllSpeakers };
+      });
+      persist();
+    },
+
+    updateSegment: (id: string, updates: Partial<TranscriptSegment>) => {
+      set(state => {
+        const updatedTranscripts = state.transcripts.map(t =>
+          t.id === id ? { ...t, ...updates, isEdited: true } : t
+        );
+        const updatedAllTranscripts = state.allTranscripts.map(t =>
+          t.id === id ? { ...t, ...updates, isEdited: true } : t
+        );
+        return { transcripts: updatedTranscripts, allTranscripts: updatedAllTranscripts };
+      });
+      get().regenerateTopics();
+      persist();
+    },
+
+    mergeSegments: (segmentIds: string[]) => {
+      set(state => {
+        const segments = state.transcripts.filter(t => segmentIds.includes(t.id));
+        if (segments.length < 2) return state;
+
+        const sorted = [...segments].sort((a, b) => a.order - b.order);
+        const first = sorted[0];
+        const last = sorted[sorted.length - 1];
+        const mergedText = sorted.map(s => s.text).join('');
+
+        const mergedSegment: TranscriptSegment = {
+          ...first,
+          endTime: last.endTime,
+          text: mergedText,
+          isEdited: true,
+        };
+
+        const updatedTranscripts = [...state.transcripts.filter(t => !segmentIds.includes(t.id)), mergedSegment]
+          .sort((a, b) => a.order - b.order);
+
+        const updatedAllTranscripts = state.allTranscripts.map(t => {
+          if (segmentIds.includes(t.id)) return null;
+          return t;
+        }).filter(Boolean).map(t => t as TranscriptSegment);
+        const existingInAll = updatedAllTranscripts.some(t => t.id === mergedSegment.id);
+        if (!existingInAll) {
+          updatedAllTranscripts.push(mergedSegment);
+        }
+
+        return { transcripts: updatedTranscripts, allTranscripts: updatedAllTranscripts.sort((a, b) => a.order - b.order) };
+      });
+      get().regenerateTopics();
+      persist();
+    },
+
+    splitSegment: (segmentId: string, splitTime: number) => {
+      set(state => {
+        const segment = state.transcripts.find(t => t.id === segmentId);
+        if (!segment) return state;
+
+        const midIndex = Math.floor(segment.text.length / 2);
+        const text1 = segment.text.slice(0, midIndex);
+        const text2 = segment.text.slice(midIndex);
+
+        const seg1: TranscriptSegment = {
+          ...segment,
+          id: generateId(),
+          endTime: splitTime,
+          text: text1,
+          isEdited: true,
+        };
+
+        const seg2: TranscriptSegment = {
+          ...segment,
+          id: generateId(),
+          startTime: splitTime,
+          text: text2,
+          order: segment.order + 1,
+          isEdited: true,
+        };
+
+        const updatedTranscripts = state.transcripts
+          .filter(t => t.id !== segmentId)
+          .map(t => t.order > segment.order ? { ...t, order: t.order + 1 } : t);
+        const final = [...updatedTranscripts, seg1, seg2].sort((a, b) => a.order - b.order);
+
+        const updatedAllTranscripts = state.allTranscripts
+          .filter(t => t.id !== segmentId)
+          .map(t => t.order > segment.order ? { ...t, order: t.order + 1 } : t);
+        const finalAll = [...updatedAllTranscripts, seg1, seg2].sort((a, b) => a.order - b.order);
+
+        return { transcripts: final, allTranscripts: finalAll };
+      });
+      get().regenerateTopics();
+      persist();
+    },
+
+    updateTopic: (id: string, updates: Partial<Topic>) => {
+      set(state => {
+        const updatedTopics = state.topics.map(t =>
+          t.id === id ? { ...t, ...updates } : t
+        );
+        const updatedAllTopics = state.allTopics.map(t =>
+          t.id === id ? { ...t, ...updates } : t
+        );
+        return { topics: updatedTopics, allTopics: updatedAllTopics };
+      });
+      persist();
+    },
+
+    setSelectedSegment: (id: string | null) => {
+      set({ selectedSegmentId: id });
+    },
+
+    setPlaying: (playing: boolean) => {
+      set({ isPlaying: playing });
+    },
+
+    setCurrentTime: (time: number) => {
+      set({ currentTime: time });
+      const { transcripts, selectedSegmentId } = get();
+      const currentSegment = transcripts.find(
+        t => time >= t.startTime && time <= t.endTime
+      );
+      if (currentSegment && currentSegment.id !== selectedSegmentId) {
+        set({ selectedSegmentId: currentSegment.id });
+      }
+    },
+
+    updateExportConfig: (config: Partial<ExportConfig>) => {
+      set(state => ({
+        exportConfig: { ...state.exportConfig, ...config },
+      }));
+    },
+
+    addNewMeeting: (meeting: Partial<Meeting>) => {
+      const newMeeting: Meeting = {
+        id: generateId(),
+        title: meeting.title || '新会议',
+        date: meeting.date || new Date().toISOString(),
+        duration: meeting.duration || 330,
+        status: meeting.status || 'uploading',
+        audioUrl: meeting.audioUrl || '',
+        audioFileName: meeting.audioFileName || '',
+        audioFileSize: meeting.audioFileSize || 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        progress: 0,
+      };
+      set(state => ({
+        meetings: [newMeeting, ...state.meetings],
+      }));
+      persist();
+      return newMeeting;
+    },
+
+    updateMeetingProgress: (id: string, progress: number) => {
+      set(state => ({
+        meetings: state.meetings.map(m =>
+          m.id === id ? { ...m, progress, status: progress >= 100 ? 'proofreading' : m.status } : m
+        ),
+      }));
+      persist();
+    },
+
+    generateMeetingData: (meetingId: string) => {
+      const state = get();
+      const meeting = state.meetings.find(m => m.id === meetingId);
+      if (!meeting) return;
+
+      const existingSpeakers = state.allSpeakers.filter(s => s.meetingId === meetingId);
+      if (existingSpeakers.length > 0) return;
+
+      const numSpeakers = 3 + Math.floor(Math.random() * 3);
+
+      const newSpeakers: Speaker[] = [];
+      for (let i = 0; i < numSpeakers; i++) {
+        newSpeakers.push({
+          id: generateId(),
+          meetingId,
+          voiceprintId: `vp-${generateId()}`,
+          name: `发言人${i + 1}`,
+          department: '',
+          role: '',
+          color: speakerColors[i % speakerColors.length],
+          isVerified: false,
+        });
       }
 
-      return { transcripts: updatedTranscripts, allTranscripts: updatedAllTranscripts.sort((a, b) => a.order - b.order) };
-    });
-    get().regenerateTopics();
-  },
+      const sampleTexts = [
+        '大家好，今天的会议现在开始。请各位先汇报一下最近的工作进展。',
+        '好的，我先说一下我们部门的情况。目前各项工作进展顺利，完成了大部分季度目标，还有少部分需要继续推进。',
+        '我们这边也在积极推进中。虽然遇到了一些困难，但团队已经制定了应对方案，预计下个月能看到成效。',
+        '感谢各位的汇报。接下来我们讨论一下后续的重点工作安排，大家有什么建议？',
+        '我认为首先应该明确优先级，把最重要的几件事排在前面，确保资源集中使用。',
+        '同意，另外我建议建立一个定期跟踪机制，每周同步一次进展，避免信息滞后。',
+        '这个方案不错。那我们确定一下时间节点和责任人，下周之前把详细计划提交上来。',
+        '好的，我回去会安排团队尽快落实，有问题随时沟通。',
+        '没问题，我会跟进相关事项的推进情况，确保按时完成。',
+        '那今天的会议就到这里，大家辛苦了，散会。',
+        '我补充一点，关于预算方面的问题，我们需要再和财务确认一下具体数字。',
+        '对，预算审批流程也需要加快，不能影响项目进度。',
+        '近期客户反馈也不错，我们应该趁热打铁，加大市场推广力度。',
+        '好的，这些我都会记录下来，稍后整理成待办清单发给大家。',
+      ];
 
-  splitSegment: (segmentId: string, splitTime: number) => {
-    set(state => {
-      const segment = state.transcripts.find(t => t.id === segmentId);
-      if (!segment) return state;
+      const newTranscripts: TranscriptSegment[] = [];
+      let currentTime = 0;
+      const totalDuration = meeting.duration || 330;
+      const avgSegmentDuration = totalDuration / sampleTexts.length;
 
-      const midIndex = Math.floor(segment.text.length / 2);
-      const text1 = segment.text.slice(0, midIndex);
-      const text2 = segment.text.slice(midIndex);
+      for (let i = 0; i < sampleTexts.length; i++) {
+        const speakerIdx = i % numSpeakers;
+        const startTime = currentTime;
+        const endTime = Math.min(startTime + avgSegmentDuration * (0.7 + Math.random() * 0.6), totalDuration);
 
-      const seg1: TranscriptSegment = {
-        ...segment,
-        id: generateId(),
-        endTime: splitTime,
-        text: text1,
-        isEdited: true,
-      };
+        newTranscripts.push({
+          id: generateId(),
+          meetingId,
+          speakerId: newSpeakers[speakerIdx].id,
+          startTime: Math.round(startTime),
+          endTime: Math.round(endTime),
+          text: sampleTexts[i],
+          isEdited: false,
+          order: i + 1,
+        });
+        currentTime = endTime + 1;
+      }
 
-      const seg2: TranscriptSegment = {
-        ...segment,
-        id: generateId(),
-        startTime: splitTime,
-        text: text2,
-        order: segment.order + 1,
-        isEdited: true,
-      };
+      const newTopics = buildTopicsFromTranscripts(meetingId, newSpeakers, newTranscripts);
 
-      const updatedTranscripts = state.transcripts
-        .filter(t => t.id !== segmentId)
-        .map(t => t.order > segment.order ? { ...t, order: t.order + 1 } : t);
-      const final = [...updatedTranscripts, seg1, seg2].sort((a, b) => a.order - b.order);
+      set(state => ({
+        allSpeakers: [...state.allSpeakers, ...newSpeakers],
+        allTranscripts: [...state.allTranscripts, ...newTranscripts],
+        allTopics: [...state.allTopics, ...newTopics],
+      }));
+      persist();
 
-      const updatedAllTranscripts = state.allTranscripts
-        .filter(t => t.id !== segmentId)
-        .map(t => t.order > segment.order ? { ...t, order: t.order + 1 } : t);
-      const finalAll = [...updatedAllTranscripts, seg1, seg2].sort((a, b) => a.order - b.order);
+      if (state.currentMeetingId === meetingId) {
+        set({
+          speakers: newSpeakers,
+          transcripts: newTranscripts.sort((a, b) => a.order - b.order),
+          topics: newTopics.sort((a, b) => a.order - b.order),
+        });
+      }
+    },
 
-      return { transcripts: final, allTranscripts: finalAll };
-    });
-    get().regenerateTopics();
-  },
+    regenerateTopics: () => {
+      const state = get();
+      const meetingId = state.currentMeetingId;
+      if (!meetingId) return;
 
-  updateTopic: (id: string, updates: Partial<Topic>) => {
-    set(state => {
-      const updatedTopics = state.topics.map(t =>
-        t.id === id ? { ...t, ...updates } : t
-      );
-      const updatedAllTopics = state.allTopics.map(t =>
-        t.id === id ? { ...t, ...updates } : t
-      );
-      return { topics: updatedTopics, allTopics: updatedAllTopics };
-    });
-  },
-
-  setSelectedSegment: (id: string | null) => {
-    set({ selectedSegmentId: id });
-  },
-
-  setPlaying: (playing: boolean) => {
-    set({ isPlaying: playing });
-  },
-
-  setCurrentTime: (time: number) => {
-    set({ currentTime: time });
-    const { transcripts, selectedSegmentId } = get();
-    const currentSegment = transcripts.find(
-      t => time >= t.startTime && time <= t.endTime
-    );
-    if (currentSegment && currentSegment.id !== selectedSegmentId) {
-      set({ selectedSegmentId: currentSegment.id });
-    }
-  },
-
-  updateExportConfig: (config: Partial<ExportConfig>) => {
-    set(state => ({
-      exportConfig: { ...state.exportConfig, ...config },
-    }));
-  },
-
-  addNewMeeting: (meeting: Partial<Meeting>) => {
-    const newMeeting: Meeting = {
-      id: generateId(),
-      title: meeting.title || '新会议',
-      date: meeting.date || new Date().toISOString(),
-      duration: meeting.duration || 330,
-      status: meeting.status || 'uploading',
-      audioUrl: meeting.audioUrl || '',
-      audioFileName: meeting.audioFileName || '',
-      audioFileSize: meeting.audioFileSize || 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      progress: 0,
-    };
-    set(state => ({
-      meetings: [newMeeting, ...state.meetings],
-    }));
-    return newMeeting;
-  },
-
-  updateMeetingProgress: (id: string, progress: number) => {
-    set(state => ({
-      meetings: state.meetings.map(m =>
-        m.id === id ? { ...m, progress, status: progress >= 100 ? 'proofreading' : m.status } : m
-      ),
-    }));
-  },
-
-  generateMeetingData: (meetingId: string) => {
-    const state = get();
-    const meeting = state.meetings.find(m => m.id === meetingId);
-    if (!meeting) return;
-
-    const existingSpeakers = state.allSpeakers.filter(s => s.meetingId === meetingId);
-    if (existingSpeakers.length > 0) return;
-
-    const numSpeakers = 3 + Math.floor(Math.random() * 3);
-
-    const newSpeakers: Speaker[] = [];
-    for (let i = 0; i < numSpeakers; i++) {
-      newSpeakers.push({
-        id: generateId(),
+      const newTopics = buildTopicsFromTranscripts(
         meetingId,
-        voiceprintId: `vp-${generateId()}`,
-        name: `发言人${i + 1}`,
-        department: '',
-        role: '',
-        color: speakerColors[i % speakerColors.length],
-        isVerified: false,
-      });
-    }
+        state.speakers,
+        state.transcripts
+      );
 
-    const sampleTexts = [
-      '大家好，今天的会议现在开始。请各位先汇报一下最近的工作进展。',
-      '好的，我先说一下我们部门的情况。目前各项工作进展顺利，完成了大部分季度目标，还有少部分需要继续推进。',
-      '我们这边也在积极推进中。虽然遇到了一些困难，但团队已经制定了应对方案，预计下个月能看到成效。',
-      '感谢各位的汇报。接下来我们讨论一下后续的重点工作安排，大家有什么建议？',
-      '我认为首先应该明确优先级，把最重要的几件事排在前面，确保资源集中使用。',
-      '同意，另外我建议建立一个定期跟踪机制，每周同步一次进展，避免信息滞后。',
-      '这个方案不错。那我们确定一下时间节点和责任人，下周之前把详细计划提交上来。',
-      '好的，我回去会安排团队尽快落实，有问题随时沟通。',
-      '没问题，我会跟进相关事项的推进情况，确保按时完成。',
-      '那今天的会议就到这里，大家辛苦了，散会。',
-      '我补充一点，关于预算方面的问题，我们需要再和财务确认一下具体数字。',
-      '对，预算审批流程也需要加快，不能影响项目进度。',
-      '近期客户反馈也不错，我们应该趁热打铁，加大市场推广力度。',
-      '好的，这些我都会记录下来，稍后整理成待办清单发给大家。',
-    ];
+      const otherTopics = state.allTopics.filter(t => t.meetingId !== meetingId);
 
-    const newTranscripts: TranscriptSegment[] = [];
-    let currentTime = 0;
-    const totalDuration = meeting.duration || 330;
-    const avgSegmentDuration = totalDuration / sampleTexts.length;
-
-    for (let i = 0; i < sampleTexts.length; i++) {
-      const speakerIdx = i % numSpeakers;
-      const startTime = currentTime;
-      const endTime = Math.min(startTime + avgSegmentDuration * (0.7 + Math.random() * 0.6), totalDuration);
-
-      newTranscripts.push({
-        id: generateId(),
-        meetingId,
-        speakerId: newSpeakers[speakerIdx].id,
-        startTime: Math.round(startTime),
-        endTime: Math.round(endTime),
-        text: sampleTexts[i],
-        isEdited: false,
-        order: i + 1,
-      });
-      currentTime = endTime + 1;
-    }
-
-    const newTopics = buildTopicsFromTranscripts(meetingId, newSpeakers, newTranscripts);
-
-    set(state => ({
-      allSpeakers: [...state.allSpeakers, ...newSpeakers],
-      allTranscripts: [...state.allTranscripts, ...newTranscripts],
-      allTopics: [...state.allTopics, ...newTopics],
-    }));
-
-    if (state.currentMeetingId === meetingId) {
       set({
-        speakers: newSpeakers,
-        transcripts: newTranscripts.sort((a, b) => a.order - b.order),
-        topics: newTopics.sort((a, b) => a.order - b.order),
+        topics: newTopics,
+        allTopics: [...otherTopics, ...newTopics],
       });
-    }
-  },
-
-  regenerateTopics: () => {
-    const state = get();
-    const meetingId = state.currentMeetingId;
-    if (!meetingId) return;
-
-    const newTopics = buildTopicsFromTranscripts(
-      meetingId,
-      state.speakers,
-      state.transcripts
-    );
-
-    const otherTopics = state.allTopics.filter(t => t.meetingId !== meetingId);
-
-    set({
-      topics: newTopics,
-      allTopics: [...otherTopics, ...newTopics],
-    });
-  },
-}));
+      persist();
+    },
+  };
+});

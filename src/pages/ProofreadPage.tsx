@@ -22,7 +22,10 @@ import {
   Play,
   Pause,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  Search,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 
 export default function ProofreadPage() {
@@ -62,6 +65,8 @@ export default function ProofreadPage() {
   
   const [showTopicsPanel, setShowTopicsPanel] = useState(true);
   const [selectedSpeakerForMerge, setSelectedSpeakerForMerge] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMatchIndex, setSearchMatchIndex] = useState(0);
 
   const meeting = meetings.find(m => m.id === meetingId);
 
@@ -163,6 +168,32 @@ export default function ProofreadPage() {
     return transcripts.filter(t => t.speakerId === speakerId);
   };
 
+  const searchMatches = transcripts.filter(t =>
+    searchQuery.trim() && t.text.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const jumpToMatch = (direction: 'prev' | 'next') => {
+    if (searchMatches.length === 0) return;
+    let nextIndex: number;
+    if (direction === 'next') {
+      nextIndex = (searchMatchIndex + 1) % searchMatches.length;
+    } else {
+      nextIndex = (searchMatchIndex - 1 + searchMatches.length) % searchMatches.length;
+    }
+    setSearchMatchIndex(nextIndex);
+    const seg = searchMatches[nextIndex];
+    setSelectedSegment(seg.id);
+    setCurrentTime(seg.startTime);
+    const el = document.getElementById(`segment-${seg.id}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
+  useEffect(() => {
+    setSearchMatchIndex(0);
+  }, [searchQuery]);
+
   if (!meeting) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -219,6 +250,35 @@ export default function ProofreadPage() {
                   </span>
                 </h2>
                 <div className="flex items-center space-x-2">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="搜索转写内容..."
+                      className="pl-9 pr-20 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 w-64"
+                    />
+                    {searchQuery.trim() && searchMatches.length > 0 && (
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center space-x-1">
+                        <span className="text-xs text-gray-400">
+                          {searchMatchIndex + 1}/{searchMatches.length}
+                        </span>
+                        <button
+                          onClick={() => jumpToMatch('prev')}
+                          className="p-1 rounded hover:bg-gray-100 text-gray-500"
+                        >
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => jumpToMatch('next')}
+                          className="p-1 rounded hover:bg-gray-100 text-gray-500"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <span className="text-xs text-gray-400">点击片段可编辑</span>
                 </div>
               </div>
@@ -228,6 +288,7 @@ export default function ProofreadPage() {
               <div ref={transcriptListRef} className="space-y-1 py-2">
                 {transcripts.map((segment) => {
                   const speaker = getSpeakerById(segment.speakerId);
+                  const isMatch = searchMatches.some(s => s.id === segment.id);
                   return (
                     <div key={segment.id} id={`segment-${segment.id}`}>
                       <TranscriptItem
@@ -251,6 +312,8 @@ export default function ProofreadPage() {
                         onEditTextChange={setEditText}
                         onSaveEdit={handleSaveSegmentEdit}
                         onCancelEdit={handleCancelEdit}
+                        searchQuery={searchQuery}
+                        isSearchMatch={isMatch}
                       />
                     </div>
                   );

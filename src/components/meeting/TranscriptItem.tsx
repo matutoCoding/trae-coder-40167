@@ -17,6 +17,8 @@ interface TranscriptItemProps {
   onEditTextChange?: (text: string) => void;
   onSaveEdit?: () => void;
   onCancelEdit?: () => void;
+  searchQuery?: string;
+  isSearchMatch?: boolean;
 }
 
 export default function TranscriptItem({
@@ -34,15 +36,37 @@ export default function TranscriptItem({
   onEditTextChange,
   onSaveEdit,
   onCancelEdit,
+  searchQuery = '',
+  isSearchMatch = false,
 }: TranscriptItemProps) {
   const speakerColor = speaker?.color || '#9ca3af';
   const speakerName = speaker?.name || '未知发言人';
+
+  const highlightText = (text: string, query: string) => {
+    if (!query.trim()) return text;
+    try {
+      const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
+      return parts.map((part, i) =>
+        part.toLowerCase() === query.toLowerCase() ? (
+          <mark key={i} className="bg-yellow-200 text-yellow-900 px-0.5 rounded">
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      );
+    } catch {
+      return text;
+    }
+  };
 
   return (
     <div
       className={`group relative pl-4 pr-2 py-3 rounded-lg transition-all duration-200 cursor-pointer ${
         isSelected
           ? 'bg-primary-50/70 ring-1 ring-primary-200'
+          : isSearchMatch
+          ? 'bg-yellow-50/70 ring-1 ring-yellow-200'
           : 'hover:bg-gray-50'
       }`}
       onClick={onSelect}
@@ -100,7 +124,7 @@ export default function TranscriptItem({
               </div>
             ) : (
               <p className="mt-1 text-sm text-gray-600 leading-relaxed line-clamp-2">
-                {segment.text}
+                {highlightText(segment.text, searchQuery)}
               </p>
             )}
           </div>

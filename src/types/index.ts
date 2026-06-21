@@ -61,6 +61,8 @@ export interface ExportConfig {
   includeTimestamp: boolean;
   anonymize: boolean;
   includeSpeakerInfo: boolean;
+  selectedSpeakerIds: string[];
+  selectedTopicIds: string[];
 }
 
 export interface ExportHistoryItem {
