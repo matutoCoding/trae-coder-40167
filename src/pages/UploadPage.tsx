@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMeetingStore } from '@/store/useMeetingStore';
-import { formatFileSize, formatTimeWithHour, generateId } from '@/utils/format';
+import { formatFileSize, formatTimeWithHour } from '@/utils/format';
 import Card, { CardHeader, CardBody, CardFooter } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import ProgressBar from '@/components/ui/ProgressBar';
@@ -28,7 +28,7 @@ export default function UploadPage() {
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState<'upload' | 'transcribing' | 'done'>('upload');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { addNewMeeting, updateMeetingProgress, meetings } = useMeetingStore();
+  const { addNewMeeting, updateMeetingProgress, generateMeetingData, meetings } = useMeetingStore();
   const [currentMeetingId, setCurrentMeetingId] = useState<string | null>(null);
 
   const transcribingStages = [
@@ -50,11 +50,14 @@ export default function UploadPage() {
         if (nextProgress >= 100) {
           setStage('done');
           setIsTranscribing(false);
+          if (currentMeetingId) {
+            generateMeetingData(currentMeetingId);
+          }
         }
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [isTranscribing, progress, currentMeetingId, updateMeetingProgress]);
+  }, [isTranscribing, progress, currentMeetingId, updateMeetingProgress, generateMeetingData]);
 
   const getCurrentStageIndex = () => {
     for (let i = transcribingStages.length - 1; i >= 0; i--) {
@@ -90,18 +93,18 @@ export default function UploadPage() {
     }
   };
 
-  const handleFile = (file: File) => {
+  const handleFile = (f: File) => {
     const validTypes = ['audio/mpeg', 'audio/wav', 'audio/x-m4a', 'audio/mp4', 'audio/aac'];
     const validExtensions = ['.mp3', '.wav', '.m4a', '.aac'];
-    const isValid = validTypes.includes(file.type) || 
-      validExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
+    const isValid = validTypes.includes(f.type) || 
+      validExtensions.some(ext => f.name.toLowerCase().endsWith(ext));
     
     if (!isValid) {
       alert('请上传音频文件（支持 MP3、WAV、M4A 格式）');
       return;
     }
     
-    setFile(file);
+    setFile(f);
   };
 
   const startTranscription = () => {
@@ -144,9 +147,26 @@ export default function UploadPage() {
   };
 
   const goToProofread = () => {
-    const meetingId = currentMeetingId || 'meeting-001';
-    navigate(`/proofread/${meetingId}`);
+    const meetingId = currentMeetingId;
+    if (meetingId) {
+      navigate(`/proofread/${meetingId}`);
+    }
   };
+
+  const currentMeeting = currentMeetingId 
+    ? useMeetingStore.getState().meetings.find(m => m.id === currentMeetingId)
+    : null;
+  const currentSpeakers = currentMeetingId
+    ? useMeetingStore.getState().allSpeakers.filter(s => s.meetingId === currentMeetingId)
+    : [];
+  const currentTranscripts = currentMeetingId
+    ? useMeetingStore.getState().allTranscripts.filter(t => t.meetingId === currentMeetingId)
+    : [];
+
+  const speakerStats = currentSpeakers.map(sp => ({
+    ...sp,
+    count: currentTranscripts.filter(t => t.speakerId === sp.id).length,
+  }));
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
@@ -327,7 +347,7 @@ export default function UploadPage() {
                 <div className="flex items-center justify-center mb-2">
                   <Users className="w-5 h-5 text-green-500" />
                 </div>
-                <div className="text-lg font-bold text-gray-900">4</div>
+                <div className="text-lg font-bold text-gray-900">{speakerStats.length || 4}</div>
                 <div className="text-xs text-gray-500">说话人识别</div>
               </div>
               <div className="text-center">
@@ -363,7 +383,7 @@ export default function UploadPage() {
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">转写完成！</h2>
                 <p className="text-sm text-gray-500">
-                  共识别出 4 位说话人，{formatTimeWithHour(330)} 转写内容
+                  共识别出 {speakerStats.length} 位说话人，{formatTimeWithHour(currentMeeting?.duration || 330)} 转写内容
                 </p>
               </div>
             </div>
@@ -379,23 +399,23 @@ export default function UploadPage() {
                     {file?.name || '会议录音.mp3'}
                   </div>
                   <div className="text-sm text-gray-500">
-                    {formatFileSize(file?.size || 0)} · {formatTimeWithHour(330)}
+                    {formatFileSize(file?.size || 0)} · {formatTimeWithHour(currentMeeting?.duration || 330)}
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-4 gap-3">
-              {[
-                { color: 'bg-[#4ecdc4]', name: '发言人1', count: '12段' },
-                { color: 'bg-[#ffd93d]', name: '发言人2', count: '8段' },
-                { color: 'bg-[#6bcb77]', name: '发言人3', count: '6段' },
-                { color: 'bg-[#b19cd9]', name: '发言人4', count: '4段' },
-              ].map((speaker, i) => (
-                <div key={i} className="p-3 bg-white border border-gray-100 rounded-xl text-center">
-                  <div className={`w-8 h-8 mx-auto rounded-full ${speaker.color} mb-2`}></div>
+            <div className={`grid gap-3 ${speakerStats.length <= 4 ? 'grid-cols-' + speakerStats.length : 'grid-cols-4'}`}>
+              {speakerStats.map((speaker) => (
+                <div key={speaker.id} className="p-3 bg-white border border-gray-100 rounded-xl text-center">
+                  <div
+                    className="w-8 h-8 mx-auto rounded-full mb-2 flex items-center justify-center text-white text-xs font-medium"
+                    style={{ backgroundColor: speaker.color }}
+                  >
+                    {speaker.name.charAt(0)}
+                  </div>
                   <div className="text-sm font-medium text-gray-800">{speaker.name}</div>
-                  <div className="text-xs text-gray-500">{speaker.count}</div>
+                  <div className="text-xs text-gray-500">{speaker.count}段</div>
                 </div>
               ))}
             </div>
@@ -419,7 +439,7 @@ export default function UploadPage() {
               <RefreshCw className="w-4 h-4" />
               重新上传
             </Button>
-            <Button size="md" onClick={goToProofread}>
+            <Button size="md" onClick={goToProofread} disabled={!currentMeetingId}>
               进入校对
               <ArrowRight className="w-4 h-4" />
             </Button>
@@ -433,28 +453,42 @@ export default function UploadPage() {
             <h2 className="text-lg font-semibold text-gray-900">最近上传</h2>
           </CardHeader>
           <CardBody className="divide-y divide-gray-100 -py-2">
-            {meetings.slice(0, 3).map((meeting) => (
-              <div
-                key={meeting.id}
-                className="flex items-center justify-between py-3 first:pt-0 last:pb-0 cursor-pointer hover:bg-gray-50 -mx-5 px-5 transition-colors"
-                onClick={() => navigate(`/proofread/${meeting.id}`)}
-              >
-                <div className="flex items-center flex-1 min-w-0">
-                  <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
-                    <FileAudio className="w-5 h-5 text-gray-500" />
-                  </div>
-                  <div className="ml-3 flex-1 min-w-0">
-                    <div className="text-sm font-medium text-gray-800 truncate">
-                      {meeting.title}
+            {meetings.slice(0, 5).map((meeting) => {
+              const spkCount = useMeetingStore.getState().allSpeakers.filter(
+                s => s.meetingId === meeting.id
+              ).length;
+              const segCount = useMeetingStore.getState().allTranscripts.filter(
+                t => t.meetingId === meeting.id
+              ).length;
+              return (
+                <div
+                  key={meeting.id}
+                  className="flex items-center justify-between py-3 first:pt-0 last:pb-0 cursor-pointer hover:bg-gray-50 -mx-5 px-5 transition-colors"
+                  onClick={() => {
+                    if (!segCount && meeting.status !== 'transcribing') {
+                      generateMeetingData(meeting.id);
+                    }
+                    navigate(`/proofread/${meeting.id}`);
+                  }}
+                >
+                  <div className="flex items-center flex-1 min-w-0">
+                    <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                      <FileAudio className="w-5 h-5 text-gray-500" />
                     </div>
-                    <div className="text-xs text-gray-500">
-                      {formatFileSize(meeting.audioFileSize)}
+                    <div className="ml-3 flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-800 truncate">
+                        {meeting.title}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {formatFileSize(meeting.audioFileSize)}
+                        {spkCount > 0 && ` · ${spkCount}位发言人 · ${segCount}段`}
+                      </div>
                     </div>
                   </div>
+                  <ArrowRight className="w-4 h-4 text-gray-300" />
                 </div>
-                <ArrowRight className="w-4 h-4 text-gray-300" />
-              </div>
-            ))}
+              );
+            })}
           </CardBody>
         </Card>
       )}
