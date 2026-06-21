@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMeetingStore } from '@/store/useMeetingStore';
-import { generateExportContent, exportFile, generateHtmlPreview } from '@/services/exportService';
+import { generateExportContent, exportFile, generateHtmlPreview, filterData } from '@/services/exportService';
 import { formatDate, formatTimeWithHour } from '@/utils/format';
 import Card, { CardHeader, CardBody, CardFooter } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
@@ -19,8 +19,6 @@ import {
   Eye,
   CheckCircle2,
   History,
-  Calendar,
-  FileAudio,
   CheckSquare,
   Square,
   Save,
@@ -28,7 +26,8 @@ import {
   Layers,
   ArrowRight,
   AlertTriangle,
-  Plus
+  Info,
+  ListChecks
 } from 'lucide-react';
 import { ExportFormat, ExportFileType } from '@/types';
 
@@ -55,6 +54,7 @@ export default function ExportPage() {
   const [previewContent, setPreviewContent] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [templateForm, setTemplateForm] = useState({ name: '', description: '' });
 
   const meeting = meetings.find(m => m.id === meetingId);
@@ -65,59 +65,80 @@ export default function ExportPage() {
     }
   }, [meetingId, setCurrentMeeting]);
 
+  const filteredData = useMemo(() => {
+    if (!meeting) return null;
+    return filterData(meeting, speakers, transcripts, topics, exportConfig);
+  }, [meeting, speakers, transcripts, topics, exportConfig]);
+
   useEffect(() => {
     if (meeting && speakers.length > 0 && transcripts.length > 0) {
-      const previewConfig = { ...exportConfig, format: previewFormat };
-      const content = generateHtmlPreview(meeting, speakers, transcripts, topics, previewConfig);
+      const content = generateHtmlPreview(meeting, speakers, transcripts, topics, exportConfig, previewFormat);
       setPreviewContent(content);
     }
   }, [meeting, speakers, transcripts, topics, exportConfig, previewFormat]);
 
-  const formatOptions: { value: ExportFormat; label: string; description: string; icon: typeof FileText }[] = [
-    {
-      value: 'full',
-      label: '完整逐字稿',
-      description: '按时间顺序完整呈现所有发言内容',
-      icon: FileText,
-    },
-    {
-      value: 'decisions',
-      label: '决议与待办',
-      description: '提取会议决议、结论和待办事项',
-      icon: FileCheck,
-    },
-    {
-      value: 'by-person',
-      label: '按人员汇总',
-      description: '按说话人分组展示各自发言内容',
-      icon: Users,
-    },
-  ];
+  const formatOptions: { value: ExportFormat; label: string; description: string; icon: typeof FileText; count: number }[] = useMemo(() => {
+    const result = {
+      full: filteredData?.filteredTranscripts.length || 0,
+      decisions: (filteredData?.filteredTopics || []).reduce((sum, t) => sum + t.actionItems.length, 0),
+      'by-person': filteredData?.filteredSpeakers.length || 0,
+    };
+    return [
+      {
+        value: 'full',
+        label: '完整逐字稿',
+        description: '按时间顺序完整呈现所有发言内容',
+        icon: FileText,
+        count: result.full,
+      },
+      {
+        value: 'decisions',
+        label: '决议与待办',
+        description: '提取会议决议、结论和待办事项',
+        icon: FileCheck,
+        count: result.decisions,
+      },
+      {
+        value: 'by-person',
+        label: '按人员汇总',
+        description: '按说话人分组展示各自发言内容',
+        icon: Users,
+        count: result['by-person'],
+      },
+    ];
+  }, [filteredData]);
 
   const fileTypeOptions: { value: ExportFileType; label: string; icon: string }[] = [
     { value: 'txt', label: 'TXT 文本', icon: '📄' },
     { value: 'html', label: 'HTML 网页', icon: '🌐' },
   ];
 
-  const canExport = exportConfig.selectedSpeakerIds.length > 0 && exportConfig.selectedTopicIds.length > 0;
+  const canExport =
+    exportConfig.selectedSpeakerIds.length > 0 &&
+    exportConfig.selectedTopicIds.length > 0 &&
+    exportConfig.formats.length > 0;
+
+  const previewNotInExport = previewFormat && !exportConfig.formats.includes(previewFormat);
+
+  const toggleFormat = (fmt: ExportFormat) => {
+    const hasFmt = exportConfig.formats.includes(fmt);
+    const next = hasFmt
+      ? exportConfig.formats.filter(f => f !== fmt)
+      : [...exportConfig.formats, fmt];
+    updateExportConfig({ formats: next });
+  };
 
   const handleExport = () => {
     if (!meeting || !canExport) return;
-    
+    setShowConfirmModal(true);
+  };
+
+  const confirmExport = () => {
+    if (!meeting) return;
+    setShowConfirmModal(false);
     setIsExporting(true);
-    
     setTimeout(() => {
-      const content = generateExportContent(
-        meeting,
-        speakers,
-        transcripts,
-        topics,
-        exportConfig
-      );
-      
-      const fileName = `${meeting.title}_${formatDate(meeting.date)}`;
-      exportFile(content, fileName, exportConfig.fileType);
-      
+      exportFile(meeting, speakers, transcripts, topics, exportConfig);
       setIsExporting(false);
     }, 800);
   };
@@ -127,7 +148,7 @@ export default function ExportPage() {
     addExportTemplate({
       name: templateForm.name,
       description: templateForm.description,
-      format: exportConfig.format,
+      formats: [...exportConfig.formats],
       includeTimestamp: exportConfig.includeTimestamp,
       anonymize: exportConfig.anonymize,
       includeSpeakerInfo: exportConfig.includeSpeakerInfo,
@@ -186,12 +207,30 @@ export default function ExportPage() {
           </Button>
           <Button size="lg" onClick={handleExport} loading={isExporting} disabled={!canExport}>
             <Download className="w-5 h-5" />
-            {isExporting ? '导出中...' : '导出文件'}
+            {isExporting ? '导出中...' : `导出文件（${exportConfig.formats.length}份）`}
           </Button>
         </div>
       </div>
 
-      {!canExport && (
+      {exportConfig.formats.length === 0 && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start space-x-2 flex-shrink-0">
+          <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-red-700">
+            请至少勾选 1 种导出格式，否则无法生成文件。
+          </div>
+        </div>
+      )}
+
+      {previewNotInExport && canExport && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-start space-x-2 flex-shrink-0">
+          <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-blue-700">
+            当前预览的是「{formatOptions.find(f => f.value === previewFormat)?.label}」，但尚未加入到导出列表，点击格式卡片的复选框可加入导出。
+          </div>
+        </div>
+      )}
+
+      {(exportConfig.selectedSpeakerIds.length === 0 || exportConfig.selectedTopicIds.length === 0) && (
         <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start space-x-2 flex-shrink-0">
           <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
           <div className="text-sm text-yellow-800">
@@ -248,7 +287,7 @@ export default function ExportPage() {
               <option value="">选择模板...</option>
               {exportTemplates.map((tpl) => (
                 <option key={tpl.id} value={tpl.id}>
-                  {tpl.name}
+                  {tpl.name}（{tpl.formats.length}份格式）
                 </option>
               ))}
             </select>
@@ -379,21 +418,13 @@ export default function ExportPage() {
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="bg-gray-50 rounded-lg p-2 text-center">
                       <div className="text-lg font-bold text-primary-600">
-                        {transcripts.filter(t => 
-                          exportConfig.selectedSpeakerIds.includes(t.speakerId) &&
-                          (exportConfig.selectedTopicIds.length === topics.length ||
-                           exportConfig.selectedTopicIds.some(tid => {
-                             const topic = topics.find(tp => tp.id === tid);
-                             return topic?.segmentIds?.includes(t.id);
-                           }))
-                        ).length}
+                        {filteredData?.filteredTranscripts.length || 0}
                       </div>
                       <div className="text-xs text-gray-500">相关发言</div>
                     </div>
                     <div className="bg-gray-50 rounded-lg p-2 text-center">
                       <div className="text-lg font-bold text-primary-600">
-                        {topics
-                          .filter(t => exportConfig.selectedTopicIds.includes(t.id))
+                        {(filteredData?.filteredTopics || [])
                           .reduce((sum, t) => sum + t.actionItems.length, 0)}
                       </div>
                       <div className="text-xs text-gray-500">待办事项</div>
@@ -408,49 +439,93 @@ export default function ExportPage() {
             <>
               <Card>
                 <CardHeader>
-                  <h2 className="font-semibold text-gray-900 flex items-center">
-                    <FileText className="w-5 h-5 mr-2 text-primary-600" />
-                    选择格式
-                  </h2>
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-semibold text-gray-900 flex items-center">
+                      <ListChecks className="w-5 h-5 mr-2 text-primary-600" />
+                      导出格式（可多选）
+                    </h2>
+                    <button
+                      onClick={() => {
+                        const all = formatOptions.map(o => o.value);
+                        const allSelected = exportConfig.formats.length === all.length;
+                        updateExportConfig({
+                          formats: allSelected ? [] : all,
+                        });
+                      }}
+                      className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                    >
+                      {exportConfig.formats.length === formatOptions.length ? '取消全选' : '全选'}
+                    </button>
+                  </div>
                 </CardHeader>
                 <CardBody className="space-y-3">
                   {formatOptions.map((option) => {
                     const Icon = option.icon;
-                    const isSelected = exportConfig.format === option.value;
+                    const isSelected = exportConfig.formats.includes(option.value);
+                    const isPreview = previewFormat === option.value;
                     return (
                       <div
                         key={option.value}
-                        onClick={() => updateExportConfig({ format: option.value })}
-                        className={`p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 ${
+                        className={`p-4 rounded-xl border-2 transition-all duration-200 ${
                           isSelected
                             ? 'border-primary-400 bg-primary-50/50 shadow-sm'
+                            : isPreview
+                            ? 'border-gray-300 bg-gray-50'
                             : 'border-gray-100 bg-white hover:border-gray-200 hover:bg-gray-50'
                         }`}
                       >
                         <div className="flex items-start">
-                          <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                            isSelected ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-500'
-                          }`}>
-                            <Icon className="w-5 h-5" />
+                          <div
+                            onClick={() => toggleFormat(option.value)}
+                            className="mt-1 cursor-pointer"
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="w-5 h-5 text-primary-600" />
+                            ) : (
+                              <Square className="w-5 h-5 text-gray-300 hover:text-gray-400" />
+                            )}
                           </div>
-                          <div className="ml-3 flex-1">
-                            <div className="flex items-center justify-between">
-                              <span className={`font-medium text-sm ${
-                                isSelected ? 'text-primary-700' : 'text-gray-800'
-                              }`}>
-                                {option.label}
-                              </span>
-                              {isSelected && (
-                                <CheckCircle2 className="w-5 h-5 text-primary-500" />
-                              )}
+                          <div
+                            onClick={() => setPreviewFormat(option.value)}
+                            className="ml-3 flex-1 cursor-pointer"
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-start">
+                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                                  isPreview ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-500'
+                                }`}>
+                                  <Icon className="w-5 h-5" />
+                                </div>
+                                <div className="ml-3">
+                                  <div className={`font-medium text-sm ${
+                                    isSelected ? 'text-primary-700' : 'text-gray-800'
+                                  }`}>
+                                    {option.label}
+                                    {isPreview && (
+                                      <span className="ml-2 text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded">
+                                        预览中
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-gray-500 mt-1">{option.description}</p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-lg font-bold text-primary-600">{option.count}</div>
+                                <div className="text-xs text-gray-400">
+                                  {option.value === 'decisions' ? '条待办' : option.value === 'by-person' ? '位参会' : '段发言'}
+                                </div>
+                              </div>
                             </div>
-                            <p className="text-xs text-gray-500 mt-1">{option.description}</p>
                           </div>
                         </div>
                       </div>
                     );
                   })}
                 </CardBody>
+                <CardFooter className="pt-0 text-xs text-gray-400">
+                  已选 {exportConfig.formats.length}/{formatOptions.length} 种
+                </CardFooter>
               </Card>
 
               <Card>
@@ -542,8 +617,14 @@ export default function ExportPage() {
                         <div className="text-xs text-gray-500 mt-0.5 truncate">
                           {tpl.description}
                         </div>
-                        <div className="text-xs text-gray-400 mt-1">
-                          {formatOptions.find(f => f.value === tpl.format)?.label}
+                        <div className="text-xs text-gray-400 mt-1 flex flex-wrap gap-1">
+                          {tpl.formats.map(f => (
+                            <span key={f} className="bg-gray-100 px-1.5 py-0.5 rounded">
+                              {formatOptions.find(o => o.value === f)?.label}
+                            </span>
+                          ))}
+                          {tpl.includeTimestamp && <span>·含时间戳</span>}
+                          {tpl.anonymize && <span>·匿名</span>}
                         </div>
                       </div>
                       <div className="flex items-center space-x-1 flex-shrink-0 ml-2">
@@ -612,19 +693,25 @@ export default function ExportPage() {
                 </h2>
                 <div className="flex items-center space-x-4">
                   <div className="flex items-center space-x-1 bg-gray-100 rounded-lg p-1">
-                    {formatOptions.map((opt) => (
-                      <button
-                        key={opt.value}
-                        onClick={() => setPreviewFormat(opt.value)}
-                        className={`px-3 py-1.5 text-xs rounded-md transition-all ${
-                          previewFormat === opt.value
-                            ? 'bg-white text-primary-700 font-medium shadow-sm'
-                            : 'text-gray-600 hover:text-gray-900'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
+                    {formatOptions.map((opt) => {
+                      const isInExport = exportConfig.formats.includes(opt.value);
+                      return (
+                        <button
+                          key={opt.value}
+                          onClick={() => setPreviewFormat(opt.value)}
+                          className={`relative px-3 py-1.5 text-xs rounded-md transition-all ${
+                            previewFormat === opt.value
+                              ? 'bg-white text-primary-700 font-medium shadow-sm'
+                              : 'text-gray-600 hover:text-gray-900'
+                          }`}
+                        >
+                          {opt.label}
+                          {isInExport && exportConfig.formats.length > 1 && (
+                            <CheckCircle2 className="inline-block w-3 h-3 ml-1 text-primary-500 -mt-0.5" />
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                   <div className="flex items-center space-x-2 text-sm text-gray-500">
                     <Clock className="w-4 h-4" />
@@ -640,8 +727,8 @@ export default function ExportPage() {
                   {!canExport ? (
                     <div className="h-[600px] flex flex-col items-center justify-center text-gray-500">
                       <AlertTriangle className="w-12 h-12 text-yellow-400 mb-3" />
-                      <p className="font-medium">请先选择至少 1 位发言人和 1 个议题</p>
-                      <p className="text-sm text-gray-400 mt-1">然后就能在这里看到导出内容的预览</p>
+                      <p className="font-medium">请先选择发言人和议题，再选择至少 1 种导出格式</p>
+                      <p className="text-sm text-gray-400 mt-1">然后就能在这里看到对应格式的预览</p>
                     </div>
                   ) : previewContent ? (
                     <iframe
@@ -704,11 +791,143 @@ export default function ExportPage() {
           </div>
           <div className="pt-2 border-t border-gray-100 bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-gray-500 font-medium mb-2">将保存以下配置：</p>
-            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
-              <div>格式：{formatOptions.find(f => f.value === exportConfig.format)?.label}</div>
+            <div className="space-y-1.5 text-xs text-gray-600">
+              <div>导出格式：
+                {exportConfig.formats.length > 0 ? (
+                  exportConfig.formats.map(f => (
+                    <span key={f} className="inline-block ml-1 px-1.5 py-0.5 bg-white rounded border border-gray-200">
+                      {formatOptions.find(o => o.value === f)?.label}
+                    </span>
+                  ))
+                ) : '（未选择）'}
+              </div>
               <div>时间戳：{exportConfig.includeTimestamp ? '包含' : '不包含'}</div>
               <div>发言人信息：{exportConfig.includeSpeakerInfo ? '包含' : '不包含'}</div>
               <div>匿名化：{exportConfig.anonymize ? '开启' : '关闭'}</div>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showConfirmModal}
+        onClose={() => setShowConfirmModal(false)}
+        title="确认导出"
+        size="lg"
+        footer={
+          <div className="flex justify-end space-x-3">
+            <Button
+              variant="outline"
+              onClick={() => setShowConfirmModal(false)}
+            >
+              再看看
+            </Button>
+            <Button onClick={confirmExport}>
+              <Download className="w-4 h-4" />
+              确认导出
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div className="flex items-start space-x-2 p-3 bg-primary-50 border border-primary-100 rounded-lg">
+            <Info className="w-5 h-5 text-primary-600 flex-shrink-0 mt-0.5" />
+            <div className="text-sm text-primary-800">
+              请确认以下导出内容，确认后将生成
+              <span className="font-bold mx-1">{exportConfig.formats.length}</span>
+              份文件（
+              {exportConfig.fileType === 'txt' ? 'TXT 文本' : 'HTML 网页'}
+              格式）
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-gray-50 rounded-lg p-4">
+              <div className="text-xs text-gray-500 mb-1">会议</div>
+              <div className="font-medium text-gray-800 truncate">{meeting.title}</div>
+              <div className="text-xs text-gray-400 mt-1">{formatDate(meeting.date)}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-4">
+              <div className="text-xs text-gray-500 mb-1">选择发言人</div>
+              <div className="text-2xl font-bold text-primary-600">
+                {exportConfig.selectedSpeakerIds.length}
+                <span className="text-sm font-normal text-gray-400 ml-1">/ {speakers.length}</span>
+              </div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-4">
+              <div className="text-xs text-gray-500 mb-1">选择议题</div>
+              <div className="text-2xl font-bold text-primary-600">
+                {exportConfig.selectedTopicIds.length}
+                <span className="text-sm font-normal text-gray-400 ml-1">/ {topics.length}</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-sm font-medium text-gray-700 mb-2">将导出的文件：</div>
+            <div className="space-y-2">
+              {exportConfig.formats.map((fmt) => {
+                const opt = formatOptions.find(o => o.value === fmt);
+                const countMsg = fmt === 'full'
+                  ? `${filteredData?.filteredTranscripts.length || 0} 段发言`
+                  : fmt === 'decisions'
+                  ? `${(filteredData?.filteredTopics || []).reduce((sum, t) => sum + t.actionItems.length, 0)} 条待办`
+                  : `${filteredData?.filteredSpeakers.length || 0} 位参会人`;
+                return (
+                  <div
+                    key={fmt}
+                    className="flex items-center justify-between p-3 border border-gray-200 rounded-lg bg-white"
+                  >
+                    <div className="flex items-center">
+                      {opt && <opt.icon className="w-5 h-5 text-primary-600 mr-3" />}
+                      <div>
+                        <div className="text-sm font-medium text-gray-800">
+                          {meeting.title}_{formatDate(meeting.date)}_{opt?.label}.
+                          {exportConfig.fileType}
+                        </div>
+                        <div className="text-xs text-gray-400">{countMsg}</div>
+                      </div>
+                    </div>
+                    <div className="text-sm text-primary-600 font-medium">
+                      {opt?.label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-sm font-medium text-gray-700 mb-2">包含的发言人：</div>
+            <div className="flex flex-wrap gap-2">
+              {speakers
+                .filter(s => exportConfig.selectedSpeakerIds.includes(s.id))
+                .map(s => (
+                  <span
+                    key={s.id}
+                    className="inline-flex items-center px-2.5 py-1 rounded-full text-xs text-white font-medium"
+                    style={{ backgroundColor: s.color }}
+                  >
+                    {s.name}
+                  </span>
+                ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-sm font-medium text-gray-700 mb-2">包含的议题：</div>
+            <div className="space-y-1.5">
+              {topics
+                .filter(t => exportConfig.selectedTopicIds.includes(t.id))
+                .map(t => (
+                  <div key={t.id} className="flex items-start text-sm p-2 bg-gray-50 rounded">
+                    <ListChecks className="w-4 h-4 text-primary-600 flex-shrink-0 mt-0.5 mr-2" />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-800">{t.title}</div>
+                      <div className="text-xs text-gray-500 truncate">{t.summary}</div>
+                    </div>
+                  </div>
+                ))}
             </div>
           </div>
         </div>

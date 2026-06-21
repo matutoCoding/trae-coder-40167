@@ -57,7 +57,7 @@ export type ExportFormat = 'full' | 'decisions' | 'by-person';
 export type ExportFileType = 'txt' | 'html';
 
 export interface ExportConfig {
-  format: ExportFormat;
+  formats: ExportFormat[];
   fileType: ExportFileType;
   includeTimestamp: boolean;
   anonymize: boolean;
@@ -70,7 +70,7 @@ export interface ExportTemplate {
   id: string;
   name: string;
   description: string;
-  format: ExportFormat;
+  formats: ExportFormat[];
   includeTimestamp: boolean;
   anonymize: boolean;
   includeSpeakerInfo: boolean;

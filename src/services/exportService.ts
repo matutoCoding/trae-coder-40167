@@ -1,14 +1,22 @@
 import { saveAs } from 'file-saver';
-import { Meeting, Speaker, TranscriptSegment, Topic, ExportConfig } from '@/types';
+import { Meeting, Speaker, TranscriptSegment, Topic, ExportConfig, ExportFormat } from '@/types';
 import { formatTimeWithHour, formatDate } from '@/utils/format';
 
-export function generateExportContent(
+export interface FilteredData {
+  filteredSpeakers: Speaker[];
+  filteredTranscripts: TranscriptSegment[];
+  filteredTopics: Topic[];
+  getSpeakerName: (id: string) => string;
+  getSpeakerInfo: (id: string) => string;
+}
+
+export function filterData(
   meeting: Meeting,
   speakers: Speaker[],
   transcripts: TranscriptSegment[],
   topics: Topic[],
   config: ExportConfig
-): string {
+): FilteredData {
   const filteredSpeakerIds = config.selectedSpeakerIds?.length > 0
     ? config.selectedSpeakerIds
     : speakers.map(s => s.id);
@@ -48,9 +56,25 @@ export function generateExportContent(
     return info ? ` (${info})` : '';
   };
 
-  if (config.format === 'full') {
+  return { filteredSpeakers, filteredTranscripts, filteredTopics, getSpeakerName, getSpeakerInfo };
+}
+
+export function generateExportContent(
+  meeting: Meeting,
+  speakers: Speaker[],
+  transcripts: TranscriptSegment[],
+  topics: Topic[],
+  config: ExportConfig,
+  formatOverride?: ExportFormat
+): string {
+  const format = formatOverride || (config.formats.length > 0 ? config.formats[0] : 'full');
+  const { filteredSpeakers, filteredTranscripts, filteredTopics, getSpeakerName, getSpeakerInfo } = filterData(
+    meeting, speakers, transcripts, topics, config
+  );
+
+  if (format === 'full') {
     return generateFullTranscript(meeting, filteredSpeakers, filteredTranscripts, config, getSpeakerName, getSpeakerInfo);
-  } else if (config.format === 'decisions') {
+  } else if (format === 'decisions') {
     return generateDecisionsAndActions(meeting, filteredTopics, config);
   } else {
     return generateByPerson(meeting, filteredSpeakers, filteredTranscripts, config, getSpeakerName, getSpeakerInfo);
@@ -168,22 +192,20 @@ function generateByPerson(
   return content;
 }
 
-export function exportFile(
-  content: string,
-  fileName: string,
-  fileType: 'txt' | 'html'
-): void {
-  let blob: Blob;
-  let fullFileName: string;
+const FORMAT_SUFFIX: Record<ExportFormat, string> = {
+  full: '完整逐字稿',
+  decisions: '决议待办',
+  'by-person': '按人员汇总',
+};
 
-  if (fileType === 'html') {
-    const htmlContent = `
+function buildHtmlDocument(content: string, title: string): string {
+  return `
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${fileName}</title>
+  <title>${title}</title>
   <style>
     body { 
       font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -205,14 +227,35 @@ export function exportFile(
   <pre style="white-space: pre-wrap; font-family: inherit;">${content}</pre>
 </body>
 </html>`;
-    blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-    fullFileName = `${fileName}.html`;
-  } else {
-    blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    fullFileName = `${fileName}.txt`;
-  }
+}
 
-  saveAs(blob, fullFileName);
+export function exportFile(
+  meeting: Meeting,
+  speakers: Speaker[],
+  transcripts: TranscriptSegment[],
+  topics: Topic[],
+  config: ExportConfig
+): void {
+  const formats = config.formats.length > 0 ? config.formats : (['full'] as ExportFormat[]);
+  const baseFileName = `${meeting.title}_${formatDate(meeting.date)}`;
+
+  formats.forEach((fmt) => {
+    const content = generateExportContent(meeting, speakers, transcripts, topics, config, fmt);
+    const fileName = `${baseFileName}_${FORMAT_SUFFIX[fmt]}`;
+    let blob: Blob;
+    let fullFileName: string;
+
+    if (config.fileType === 'html') {
+      const htmlContent = buildHtmlDocument(content, fileName);
+      blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+      fullFileName = `${fileName}.html`;
+    } else {
+      blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      fullFileName = `${fileName}.txt`;
+    }
+
+    setTimeout(() => saveAs(blob, fullFileName), 0);
+  });
 }
 
 export function generateHtmlPreview(
@@ -220,101 +263,9 @@ export function generateHtmlPreview(
   speakers: Speaker[],
   transcripts: TranscriptSegment[],
   topics: Topic[],
-  config: ExportConfig
+  config: ExportConfig,
+  previewFormat: ExportFormat
 ): string {
-  const content = generateExportContent(meeting, speakers, transcripts, topics, config);
-  
-  return `
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { 
-      font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-      line-height: 1.8;
-      color: #333;
-      margin: 0;
-      padding: 0;
-    }
-    .document {
-      background: white;
-      padding: 40px;
-      min-height: 100%;
-    }
-    h1 { 
-      font-size: 24px;
-      color: #1e3a5f; 
-      margin: 0 0 10px 0;
-    }
-    .meta {
-      color: #666;
-      font-size: 14px;
-      margin-bottom: 30px;
-      padding-bottom: 15px;
-      border-bottom: 2px solid #e5e7eb;
-    }
-    .speaker-block {
-      margin-bottom: 20px;
-    }
-    .speaker-name { 
-      font-weight: 600; 
-      color: #2d5485; 
-      margin-bottom: 4px;
-    }
-    .timestamp { 
-      color: #9ca3af; 
-      font-size: 12px;
-      margin-right: 8px;
-    }
-    .text {
-      color: #374151;
-    }
-    .topic { 
-      margin: 24px 0; 
-      padding: 16px; 
-      background: #f8fafc; 
-      border-radius: 8px; 
-    }
-    .topic-title {
-      font-weight: 600;
-      font-size: 16px;
-      color: #1e3a5f;
-      margin-bottom: 8px;
-    }
-    .topic-summary {
-      color: #4b5563;
-      font-size: 14px;
-    }
-    .action { 
-      padding: 12px; 
-      margin: 10px 0; 
-      background: #fff; 
-      border-left: 4px solid #4ecdc4;
-      border-radius: 0 6px 6px 0;
-    }
-    .action-content {
-      font-weight: 500;
-      margin-bottom: 4px;
-    }
-    .action-meta {
-      font-size: 13px;
-      color: #6b7280;
-    }
-    .section-title {
-      font-size: 18px;
-      font-weight: 600;
-      color: #1e3a5f;
-      margin: 24px 0 12px 0;
-      padding-bottom: 8px;
-      border-bottom: 1px solid #e5e7eb;
-    }
-  </style>
-</head>
-<body>
-  <div class="document">
-    <pre style="white-space: pre-wrap; font-family: inherit; margin: 0;">${content}</pre>
-  </div>
-</body>
-</html>`;
+  const content = generateExportContent(meeting, speakers, transcripts, topics, config, previewFormat);
+  return buildHtmlDocument(content, '预览');
 }

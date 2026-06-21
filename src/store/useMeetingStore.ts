@@ -240,8 +240,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => {
     {
       id: 'default-leadership',
       name: '领导版',
-      description: '只包含决议与待办，适合给管理层汇报',
-      format: 'decisions',
+      description: '决议与待办，适合给管理层汇报',
+      formats: ['decisions'],
       includeTimestamp: false,
       anonymize: false,
       includeSpeakerInfo: false,
@@ -249,17 +249,17 @@ export const useMeetingStore = create<MeetingState>((set, get) => {
     {
       id: 'default-project',
       name: '项目组版',
-      description: '按人员汇总发言，适合项目团队同步',
-      format: 'by-person',
+      description: '逐字稿 + 按人员汇总，适合项目团队同步',
+      formats: ['full', 'by-person'],
       includeTimestamp: true,
       anonymize: false,
       includeSpeakerInfo: true,
     },
     {
-      id: 'default-full',
-      name: '完整版',
-      description: '完整逐字稿，包含所有发言',
-      format: 'full',
+      id: 'default-complete',
+      name: '全套版',
+      description: '三种格式都导出，完整存档',
+      formats: ['full', 'decisions', 'by-person'],
       includeTimestamp: true,
       anonymize: false,
       includeSpeakerInfo: true,
@@ -291,7 +291,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => {
     isPlaying: false,
     currentTime: 0,
     exportConfig: {
-      format: 'full',
+      formats: ['full'],
       fileType: 'txt',
       includeTimestamp: true,
       anonymize: false,
@@ -631,7 +631,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => {
       set(state => ({
         exportConfig: {
           ...state.exportConfig,
-          format: template.format,
+          formats: [...template.formats],
           includeTimestamp: template.includeTimestamp,
           anonymize: template.anonymize,
           includeSpeakerInfo: template.includeSpeakerInfo,
