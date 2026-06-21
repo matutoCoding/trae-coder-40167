@@ -299,9 +299,6 @@ export default function ProofreadPage() {
                         onSelect={() => {
                           setSelectedSegment(segment.id);
                           setCurrentTime(segment.startTime);
-                          if (isPlaying) {
-                            setPlaying(false);
-                          }
                         }}
                         onEdit={() => handleEditSegment(segment.id)}
                         onMerge={() => handleMergeSegment(segment.id)}

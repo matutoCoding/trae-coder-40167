@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Speaker, TranscriptSegment, Topic, ActionItem, Meeting, ExportConfig } from '@/types';
+import { Speaker, TranscriptSegment, Topic, ActionItem, Meeting, ExportConfig, ExportTemplate } from '@/types';
 import { mockMeetings, mockSpeakers, mockTranscripts, mockTopics } from '@/mock/meetingData';
 import { generateId, getSpeakerColor } from '@/utils/format';
 
@@ -12,6 +12,7 @@ function loadFromStorage(): {
   allSpeakers: Speaker[];
   allTranscripts: TranscriptSegment[];
   allTopics: Topic[];
+  exportTemplates: ExportTemplate[];
 } | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -24,7 +25,13 @@ function loadFromStorage(): {
       Array.isArray(parsed.allTopics) &&
       parsed.meetings.length > 0
     ) {
-      return parsed;
+      return {
+        meetings: parsed.meetings,
+        allSpeakers: parsed.allSpeakers,
+        allTranscripts: parsed.allTranscripts,
+        allTopics: parsed.allTopics,
+        exportTemplates: Array.isArray(parsed.exportTemplates) ? parsed.exportTemplates : [],
+      };
     }
     return null;
   } catch {
@@ -37,6 +44,7 @@ function saveToStorage(state: {
   allSpeakers: Speaker[];
   allTranscripts: TranscriptSegment[];
   allTopics: Topic[];
+  exportTemplates: ExportTemplate[];
 }) {
   try {
     localStorage.setItem(
@@ -46,6 +54,7 @@ function saveToStorage(state: {
         allSpeakers: state.allSpeakers,
         allTranscripts: state.allTranscripts,
         allTopics: state.allTopics,
+        exportTemplates: state.exportTemplates,
       })
     );
   } catch {
@@ -63,6 +72,7 @@ interface MeetingState {
   isPlaying: boolean;
   currentTime: number;
   exportConfig: ExportConfig;
+  exportTemplates: ExportTemplate[];
 
   allSpeakers: Speaker[];
   allTranscripts: TranscriptSegment[];
@@ -82,6 +92,9 @@ interface MeetingState {
   updateMeetingProgress: (id: string, progress: number) => void;
   generateMeetingData: (meetingId: string) => void;
   regenerateTopics: () => void;
+  addExportTemplate: (template: Omit<ExportTemplate, 'id'>) => void;
+  deleteExportTemplate: (id: string) => void;
+  applyExportTemplate: (id: string) => void;
 }
 
 function buildTopicsFromTranscripts(
@@ -115,6 +128,7 @@ function buildTopicsFromTranscripts(
       order: topicOrder++,
       summary: summaryParts.join('；'),
       actionItems: [],
+      segmentIds: qSegments.map(s => s.id),
     });
   }
 
@@ -168,6 +182,7 @@ function buildTopicsFromTranscripts(
       order: topicOrder++,
       summary: summaryParts.join('；'),
       actionItems: items,
+      segmentIds: discussSegments.map(s => s.id),
     });
   }
 
@@ -188,6 +203,7 @@ function buildTopicsFromTranscripts(
         deadline: '待定',
         status: 'pending' as const,
       }],
+      segmentIds: closingSegments.map(s => s.id),
     });
   }
 
@@ -200,6 +216,7 @@ function buildTopicsFromTranscripts(
       order: 1,
       summary: firstTexts || '暂无内容',
       actionItems: [],
+      segmentIds: transcripts.slice(0, 3).map(s => s.id),
     });
   }
 
@@ -219,6 +236,40 @@ export const useMeetingStore = create<MeetingState>((set, get) => {
   const initialAllTranscripts = stored ? stored.allTranscripts : [...mockTranscripts];
   const initialAllTopics = stored ? stored.allTopics : [...mockTopics];
 
+  const defaultTemplates: ExportTemplate[] = [
+    {
+      id: 'default-leadership',
+      name: '领导版',
+      description: '只包含决议与待办，适合给管理层汇报',
+      format: 'decisions',
+      includeTimestamp: false,
+      anonymize: false,
+      includeSpeakerInfo: false,
+    },
+    {
+      id: 'default-project',
+      name: '项目组版',
+      description: '按人员汇总发言，适合项目团队同步',
+      format: 'by-person',
+      includeTimestamp: true,
+      anonymize: false,
+      includeSpeakerInfo: true,
+    },
+    {
+      id: 'default-full',
+      name: '完整版',
+      description: '完整逐字稿，包含所有发言',
+      format: 'full',
+      includeTimestamp: true,
+      anonymize: false,
+      includeSpeakerInfo: true,
+    },
+  ];
+
+  const initialTemplates = stored?.exportTemplates && stored.exportTemplates.length > 0
+    ? stored.exportTemplates
+    : defaultTemplates;
+
   const persist = () => {
     const s = get();
     saveToStorage({
@@ -226,6 +277,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => {
       allSpeakers: s.allSpeakers,
       allTranscripts: s.allTranscripts,
       allTopics: s.allTopics,
+      exportTemplates: s.exportTemplates,
     });
   };
 
@@ -247,6 +299,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => {
       selectedSpeakerIds: [],
       selectedTopicIds: [],
     },
+    exportTemplates: initialTemplates,
 
     allSpeakers: initialAllSpeakers,
     allTranscripts: initialAllTranscripts,
@@ -552,6 +605,38 @@ export const useMeetingStore = create<MeetingState>((set, get) => {
         allTopics: [...otherTopics, ...newTopics],
       });
       persist();
+    },
+
+    addExportTemplate: (template: Omit<ExportTemplate, 'id'>) => {
+      set(state => ({
+        exportTemplates: [
+          ...state.exportTemplates,
+          { ...template, id: generateId() },
+        ],
+      }));
+      persist();
+    },
+
+    deleteExportTemplate: (id: string) => {
+      if (id.startsWith('default-')) return;
+      set(state => ({
+        exportTemplates: state.exportTemplates.filter(t => t.id !== id),
+      }));
+      persist();
+    },
+
+    applyExportTemplate: (id: string) => {
+      const template = get().exportTemplates.find(t => t.id === id);
+      if (!template) return;
+      set(state => ({
+        exportConfig: {
+          ...state.exportConfig,
+          format: template.format,
+          includeTimestamp: template.includeTimestamp,
+          anonymize: template.anonymize,
+          includeSpeakerInfo: template.includeSpeakerInfo,
+        },
+      }));
     },
   };
 });

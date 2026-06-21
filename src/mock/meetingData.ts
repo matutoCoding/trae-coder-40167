@@ -246,6 +246,7 @@ export const mockTopics: Topic[] = [
     order: 1,
     summary: '各部门汇报Q2工作进展，销售额完成92%，产品上线三个新功能，人员流失率5%。',
     actionItems: [],
+    segmentIds: ['seg-001', 'seg-002', 'seg-003', 'seg-004', 'seg-005', 'seg-006'],
   },
   {
     id: 'topic-002',
@@ -279,6 +280,7 @@ export const mockTopics: Topic[] = [
         status: 'pending',
       },
     ],
+    segmentIds: ['seg-007', 'seg-008', 'seg-009', 'seg-010'],
   },
   {
     id: 'topic-003',
@@ -296,6 +298,7 @@ export const mockTopics: Topic[] = [
         status: 'pending',
       },
     ],
+    segmentIds: ['seg-011', 'seg-012', 'seg-013', 'seg-014', 'seg-015'],
   },
 ];
 

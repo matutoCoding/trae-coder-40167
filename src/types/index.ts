@@ -36,6 +36,7 @@ export interface Topic {
   order: number;
   summary: string;
   actionItems: ActionItem[];
+  segmentIds: string[];
 }
 
 export interface Meeting {
@@ -63,6 +64,16 @@ export interface ExportConfig {
   includeSpeakerInfo: boolean;
   selectedSpeakerIds: string[];
   selectedTopicIds: string[];
+}
+
+export interface ExportTemplate {
+  id: string;
+  name: string;
+  description: string;
+  format: ExportFormat;
+  includeTimestamp: boolean;
+  anonymize: boolean;
+  includeSpeakerInfo: boolean;
 }
 
 export interface ExportHistoryItem {

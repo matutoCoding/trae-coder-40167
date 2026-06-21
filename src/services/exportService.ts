@@ -16,9 +16,20 @@ export function generateExportContent(
     ? config.selectedTopicIds
     : topics.map(t => t.id);
 
-  const filteredSpeakers = speakers.filter(s => filteredSpeakerIds.includes(s.id));
-  const filteredTranscripts = transcripts.filter(t => filteredSpeakerIds.includes(t.speakerId));
   const filteredTopics = topics.filter(t => filteredTopicIds.includes(t.id));
+  const topicSegmentIds = new Set(
+    filteredTopics.flatMap(t => t.segmentIds || [])
+  );
+
+  const hasTopicFilter = config.selectedTopicIds?.length > 0 && config.selectedTopicIds.length < topics.length;
+
+  const filteredTranscripts = transcripts.filter(t => {
+    const speakerOk = filteredSpeakerIds.includes(t.speakerId);
+    const topicOk = hasTopicFilter ? topicSegmentIds.has(t.id) : true;
+    return speakerOk && topicOk;
+  });
+
+  const filteredSpeakers = speakers.filter(s => filteredSpeakerIds.includes(s.id));
 
   const getSpeakerName = (speakerId: string): string => {
     const speaker = filteredSpeakers.find(s => s.id === speakerId) || speakers.find(s => s.id === speakerId);
